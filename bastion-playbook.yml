@@ -1,0 +1,120 @@
+---
+- hosts: [p-bastion] # change group name
+  remote_user: ansible
+  become: yes
+
+  vars:
+    GROUP: purple
+    USERS: ['user1', 'user2', 'user3']
+    LOCAL_SSH_ZIP_PATH: /purple-2023/ssh-keys.zip
+
+  tasks:
+
+    - name: "Create group and users tasks"
+      tags: create
+      block:
+      - name: "Adding group"
+        ansible.builtin.group:
+          name: "{{ GROUP }}"
+          state: present
+
+      - name: "Add multiple standard linux users"
+        ansible.builtin.user:
+          name: "{{ item }}"
+          password: "{{ lookup('ansible.builtin.password', '/tmp/{{ ansible_ssh_host }}/{{ item }}-password.txt', chars='ascii_letters,digits') | password_hash('sha512') }}"
+          group: "{{ GROUP }}"
+          state: present
+        loop: "{{ USERS }}"
+
+
+    - name: "Download firewalld packages for hosts"
+      become: yes
+      tags: get-firewalld
+      block:
+      - name: "Creates directory"
+        file:
+          path: /tmp/packages
+          state: directory
+      - name: "Download RPMs for packages"
+        command: yumdownloader --assumeyes --downloadonly --resolve 'firewalld'
+        args:
+          chdir: /tmp/packages
+
+
+    - name: "Copy ssh-keys to bastion"
+      remote_user: ansible
+      tags: copy-ssh-zip
+      block:
+      - name: "Install zip and unzip packages"
+        ansible.builtin.yum:
+          name:
+            - zip
+            - unzip
+          state: present
+      - name: "Unzip encrypted zip"
+        unarchive:
+          src: "{{ LOCAL_SSH_ZIP_PATH }}"
+          dest: /home/ansible/.ssh/
+          extra_opts:
+          - "-P"
+          - "keyz4"
+      - name: "Add host1 pub key to authorized_keys"
+        become: yes
+        ansible.builtin.shell: cat /home/ansible/.ssh/pp-ssh-keys/id_rsa_user_1_host_1.pub >> /home/ansible/.ssh/authorized_keys
+      - name: "Copy private ssh key of bastion"
+        become: yes
+        ansible.builtin.shell: cat /home/ansible/.ssh/pp-ssh-keys/id_rsa_ansible_bastion >> /home/ansible/.ssh/id_rsa
+      - name: "Copy public ssh key of bastion"
+        become: yes
+        ansible.builtin.shell: cat /home/ansible/.ssh/pp-ssh-keys/id_rsa_ansible_bastion.pub >> /home/ansible/.ssh/id_rsa.pub  
+      - name: "Change key files permissions to 600 - priv"
+        ansible.builtin.file:
+          path: /home/ansible/.ssh/id_rsa
+          mode: '600'
+          owner: ansible
+          group: ansible
+      - name: "Change key files permissions to 600 - pub"
+        ansible.builtin.file:
+          path: /home/ansible/.ssh/id_rsa.pub
+          mode: '600'
+          owner: ansible
+          group: ansible
+
+
+    - name: "Installing firewalld for bastion"
+      become: yes
+      tags: firewall-bastion
+      block:
+      - name: "Install zip and unzip packages"
+        ansible.builtin.yum:
+          name:
+            - firewalld
+          state: present
+      - name: "Start service firewalld, if not started"
+        ansible.builtin.service:
+          name: firewalld
+          state: started
+      - name: "system reboot"
+        reboot:
+      - name: "Execute the command in remote shell"
+        ansible.builtin.shell: firewall-cmd --permanent --zone=public --add-port=22/tcp
+      - name: "Execute the command in remote shell"
+        ansible.builtin.shell: firewall-cmd --permanent --zone=public --add-port=9999/tcp
+      - name: "Execute the command in remote shell"
+        ansible.builtin.shell: firewall-cmd --permanent --zone=public --add-port=80/tcp
+      - name: "Execute the command in remote shell"
+        ansible.builtin.shell: firewall-cmd --permanent --zone=public --add-port=443/tcp
+      - name: "Execute the command in remote shell - reload frewalld"
+        ansible.builtin.shell:  firewall-cmd --reload
+
+
+    - name: "OS Patching"
+      become: yes
+      tags: patch
+      block:
+      - name: "yum upgrade to latest"
+        ansible.builtin.yum:
+          name: '*'
+          state: latest
+      - name: "system reboot"
+        reboot:

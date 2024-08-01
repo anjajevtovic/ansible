@@ -1,0 +1,57 @@
+---
+- hosts: [p-bastion] # change group name
+  remote_user: ansible
+  become: yes
+  vars:
+    LOCAL_SCRIPTS_PATH: /purple-2023/ansible-playbooks/combat-week-1/host-playbooks
+
+  tasks:
+
+    - name: "Copy ansible scripts to bastion"
+      remote_user: ansible
+      tags: copy-scripts
+      block:
+      - name: "Creates directory"
+        file:
+          path: /home/ansible/ansible-scripts
+          state: directory
+      - name: "Copy scripts"
+        copy:
+          src: "{{ LOCAL_SCRIPTS_PATH }}"
+          dest:  /home/ansible/ansible-scripts
+      - name: "Shell command to create hosts file"
+        ansible.builtin.shell: printf "[host1]\n10.20.0.15\n[host2]\n10.20.0.17\n[host3]\n10.20.0.19\n" > /home/ansible/ansible-scripts/hosts
+
+
+    - name: "Installing ansible"
+      become: yes
+      tags: ansible-install
+      block:
+      - name: "Install python3"
+        ansible.builtin.yum:
+          name:
+            - python3
+          state: present
+      - name: "Install epel"
+        ansible.builtin.yum:
+          name:
+            - epel-release
+          state: present
+      - name: "Install ansible"
+        ansible.builtin.yum:
+          name:
+            - ansible
+          state: present
+        
+
+    - name: "Run all scripts"
+      remote_user: ansible
+      tags: run-scripts
+      block:
+      - name: "host1 script"
+        ansible.builtin.shell: ansible-playbook host1-playbook.yml --tags all -i /home/ansible/ansible-scripts/hosts -v
+      - name: "host2 script"
+        ansible.builtin.shell: ansible-playbook host2-playbook.yml --tags all -i /home/ansible/ansible-scripts/hosts -v
+      - name: "host3 script"
+        ansible.builtin.shell: ansible-playbook host3-playbook.yml --tags all -i /home/ansible/ansible-scripts/hosts -v
+

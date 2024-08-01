@@ -1,0 +1,95 @@
+---
+- hosts: [host1] # change group name
+  remote_user: ansible
+  become: yes
+  tasks:
+    - name: "Generate ssh keys "
+      tags: generate-ssh
+      block:
+      - name: "Creates directory"
+        file:
+          path: /home/user-1/.ssh
+          state: directory
+          owner: user-1
+          mode: "700"
+      - name: "Copy public key"
+        ansible.builtin.copy:
+          src: /home/ansible/.ssh/pp-ssh-keys/id_rsa_user_1_host_1.pub
+          dest: /home/user-1/.ssh/id_rsa.pub
+      - name: "Copy priv key"
+        ansible.builtin.copy:
+          src: /home/ansible/.ssh/pp-ssh-keys/id_rsa_user_1_host_1
+          dest: /home/user-1/.ssh/id_rsa
+      - name: "Change key files permissions to 600 - priv"
+        ansible.builtin.file:
+          path: /home/user-1/.ssh/id_rsa
+          mode: '600'
+          owner: user-1
+          group: purple
+      - name: "Change key files permissions to 600 - pub"
+        ansible.builtin.file:
+          path: /home/user-1/.ssh/id_rsa.pub
+          mode: '600'
+          owner: user-1
+          group: purple
+
+
+    - name: "firewalld set-up"
+      become: yes
+      tags: firewalld
+      block:
+      - name: "Creates directory"
+        file:
+          path: /tmp/packages
+          state: directory
+      - name: "Copy packages to host"
+        copy:
+          src: /tmp/packages
+          dest: /tmp/packages
+      - name: Create list of filenames in directory
+        find:
+          paths: "/tmp/packages/"
+          file_type: file
+        register: rpms
+      - set_fact:
+          rpm_list: "{{ rpms['files'] | map(attribute='path') | list }}"
+      - name: "Install packages from local directory"
+        yum:
+          name: "{{ rpm_list }}"
+          state: present
+      - name: "Start service firewalld, if not started"
+        ansible.builtin.service:
+          name: firewalld
+          state: started
+      - name: "system reboot"
+        reboot:
+      - name: "Execute the command in remote shell"
+        ansible.builtin.shell: firewall-cmd --permanent --zone=public --add-port=22/tcp
+      - name: "Execute the command in remote shell"
+        ansible.builtin.shell: firewall-cmd --permanent --zone=public --add-port=9999/tcp
+      - name: "Execute the command in remote shell - reload frewalld"
+        ansible.builtin.shell:  firewall-cmd --reload
+
+
+    - name: "OS Patching"
+      become: yes
+      tags: patch
+      block:
+      - name: "edit yum.conf to use proxy"
+        ansible.builtin.lineinfile:
+          state: present
+          insertafter: EOF
+          dest: /etc/yum.conf
+          line: "proxy=socks5://172.16.33.135:9999"
+      - name: Execute the command in remote shell - to run ssh
+        ansible.builtin.command: ssh -D 9999 -fN ansible@172.16.33.135
+        async: 600
+        poll: 0
+      - name: Upgrade all packages
+        ansible.builtin.yum:
+          name: '*'
+          state: latest
+          skip_broken: true
+      - name: "system reboot"
+        reboot:
+

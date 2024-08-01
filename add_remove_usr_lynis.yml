@@ -1,0 +1,72 @@
+---
+- hosts: [ansible-test] # change group name
+  remote_user: root
+  vars:
+    GROUP: randoms
+    USERS: ['neo', 'kim', 'billy', 'zack', 'nina']
+    LOCAL_LYNIS_TAR_PATH: "/tmp/lynis-3.0.8.tar.gz"
+  tasks:
+    - name: "Create Tasks"
+      tags: create
+      block:
+      - name: "Adding group"
+        ansible.builtin.group:
+          name: "{{ GROUP }}"
+          state: present
+
+      - name: "Add multiple standard linux users"
+        ansible.builtin.user:
+          name: "{{ item }}"
+          password: "{{ lookup('ansible.builtin.password', '/tmp/{{ ansible_ssh_host }}/{{ item }}-password.txt', chars='ascii_letters,digits') | password_hash('sha512') }}"
+          group: "{{ GROUP }}"
+          state: present
+        loop: "{{ USERS }}"
+     
+    - name: "Remove Tasks"
+      tags: remove
+      block:
+      - name: "Removing multiple users"
+        ansible.builtin.user:
+          name: "{{ item }}"
+          state: absent
+          remove: yes
+        loop: "{{ USERS }}"
+
+      - name: "Removing group"
+        ansible.builtin.group:
+          name: "{{ GROUP }}"
+          state: absent
+
+    - name: "Security Monitoring Tasks"
+      tags: monitor
+      block:
+      - name: "Create temporary working dir at /tmp/"
+        ansible.builtin.tempfile:
+          path: "/tmp"
+          state: directory
+        register: tmp_dir
+
+      - name: "Copy extracted lynis.tar.gz to remote"
+        ansible.builtin.unarchive:
+          src: "{{ LOCAL_LYNIS_TAR_PATH }}"
+          dest: "{{ tmp_dir.path }}"
+
+      - name: "Execute lynis scan command"
+        ansible.builtin.shell: "sudo ./lynis audit system --quick --auditor \"The Auditor\" --logfile ./output_$(hostname)_$(date -d \"today\" +\"%Y%m%d%H%M\").log"
+        args:
+          chdir: "{{ tmp_dir.path }}/lynis/"
+
+      - name: "Find output file to be fetched"
+        ansible.builtin.find: paths="{{ tmp_dir.path }}/lynis/" patterns="output_*"
+        register: file_to_fetch
+
+      - name: "Fetch output lynis file"
+        ansible.builtin.fetch:
+          src: "{{ file_to_fetch.files[0].path }}"
+          dest: "/tmp/{{ ansible_ssh_host }}/lynis_output"
+          flat: yes
+
+      - name: "Removing /tmp directory"
+        ansible.builtin.file:
+          path: "/tmp"
+          state: absent
